@@ -1,21 +1,46 @@
+"""
+PyChronicle - Week 1 - Member 1 (Pair A: Core Engineering)
+-----------------------------------------------------------
+Task: Parse a target Python file's Abstract Syntax Tree (AST)
+and identify all variable assignments.
+
+This is the foundation for the whole PyChronicle project:
+- Member 2 will test this against tricky scripts (loops, functions, classes)
+- Member 3's SQLite schema expects: line_number, variable_name
+- Week 2's tracer (sys.settrace) will use this to know WHICH lines to watch
+
+Usage:
+    python ast_variable_parser.py path/to/target_script.py
+"""
+
 import ast
 import sys
 from dataclasses import dataclass, field
- 
- 
+
+
 @dataclass
 class Assignment:
     line_number: int
-    variable_names: list       
-    assignment_type: str       
-    source_snippet: str        
- 
- 
+    variable_names: list       # list because "a, b = 1, 2" assigns two names at once
+    assignment_type: str       # "Assign" | "AugAssign" | "AnnAssign" | "For" | "With"
+    source_snippet: str        # human-readable representation of the RHS / statement
+
+
 class VariableAssignmentVisitor(ast.NodeVisitor):
+    """
+    Walks the AST and records every place a variable is assigned a value.
+    """
+
     def __init__(self):
         self.assignments: list[Assignment] = []
- 
+
+    # --- helper -----------------------------------------------------
     def _extract_names(self, target) -> list[str]:
+        """
+        A target can be a simple Name (x), a Tuple/List (a, b), or an
+        Attribute/Subscript (obj.attr, arr[0]) which we also capture
+        by their unparsed text so nothing is silently dropped.
+        """
         names = []
         if isinstance(target, ast.Name):
             names.append(target.id)
@@ -23,12 +48,14 @@ class VariableAssignmentVisitor(ast.NodeVisitor):
             for elt in target.elts:
                 names.extend(self._extract_names(elt))
         else:
+            # Attribute (self.x), Subscript (arr[0]), Starred (*rest), etc.
             try:
                 names.append(ast.unparse(target))
             except Exception:
                 names.append(type(target).__name__)
         return names
 
+    # --- standard assignment: x = 5 ----------------------------------
     def visit_Assign(self, node: ast.Assign):
         names = []
         for target in node.targets:
@@ -40,7 +67,8 @@ class VariableAssignmentVisitor(ast.NodeVisitor):
             source_snippet=ast.unparse(node),
         ))
         self.generic_visit(node)
- 
+
+    # --- augmented assignment: x += 5 ---------------------------------
     def visit_AugAssign(self, node: ast.AugAssign):
         names = self._extract_names(node.target)
         self.assignments.append(Assignment(
@@ -51,6 +79,7 @@ class VariableAssignmentVisitor(ast.NodeVisitor):
         ))
         self.generic_visit(node)
 
+    # --- annotated assignment: x: int = 5 -----------------------------
     def visit_AnnAssign(self, node: ast.AnnAssign):
         names = self._extract_names(node.target)
         self.assignments.append(Assignment(
@@ -61,8 +90,7 @@ class VariableAssignmentVisitor(ast.NodeVisitor):
         ))
         self.generic_visit(node)
 
-
-     # --- for-loop target: for i in range(10): -------------------------
+    # --- for-loop target: for i in range(10): -------------------------
     def visit_For(self, node: ast.For):
         names = self._extract_names(node.target)
         self.assignments.append(Assignment(
